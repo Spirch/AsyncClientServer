@@ -1,5 +1,0 @@
-C:\Users\Fredou\Desktop\Socket\AsyncClientServer\bin\Debug\AsyncClientServer.dll
-C:\Users\Fredou\Desktop\Socket\AsyncClientServer\bin\Debug\AsyncClientServer.pdb
-C:\Users\Fredou\Desktop\Socket\AsyncClientServer\obj\Debug\AsyncClientServer.csprojResolveAssemblyReference.cache
-C:\Users\Fredou\Desktop\Socket\AsyncClientServer\obj\Debug\AsyncClientServer.dll
-C:\Users\Fredou\Desktop\Socket\AsyncClientServer\obj\Debug\AsyncClientServer.pdb
