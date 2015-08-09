@@ -12,6 +12,7 @@ namespace AsyncClientServer
 	{
 		internal static bool IsClientConnected(this Client client)
 		{
+			//this code is verbose because i had issue at some point, it should be done in one line but i will keep it verbose for now.
 			bool connected = false;
 			bool connected1 = false;
 			bool connected2 = false;
