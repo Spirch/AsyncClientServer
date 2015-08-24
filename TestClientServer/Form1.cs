@@ -79,7 +79,7 @@ namespace TestClientServer
 			{
 				timer1.Enabled = false;
 				this.Text = "Server - Closed";
-				server.StopServer();
+				server.Stop();
 			}
 		}
 
@@ -138,54 +138,55 @@ namespace TestClientServer
 			if (client == null)
 			{
 				client = new Client();
-				client.MessageReceived += client_MessageReceived;
-				client.Disconnected += client_ConnectionClosed;
-				client.Connected += client_Connected;
-				client.SocketError += client_SocketError;
-				client.ReceivedClientId += client_ReceivedClientId;
-				client.ReceivedListClientId += client_ReceivedListClientId;
+				client.MessageReceived += client_OnMessageReceived;
+				client.Disconnected += client_OnConnectionClosed;
+				client.Connected += client_OnConnected;
+				client.SocketError += client_OnSocketError;
+				client.ClientIdReceived += client_OnReceivedClientId;
+				client.ListClientIdReceived += client_OnReceivedListClientId;
 			}
 
 			client.Connect(AddressTest, PortTest);
 		}
 
-		void client_ReceivedListClientId(Client client, IEnumerable<int> ids)
+
+		void client_OnReceivedListClientId(Client sender, ListClientIdEventArgs eventArgs)
 		{
 			this.Invoke(new Action(() =>
 			{
 				listBox1.Items.Clear();
-				listBox1.Items.AddRange(ids.Select(x => (object)x).ToArray());
+				listBox1.Items.AddRange(eventArgs.Id.Select(x => (object)x).ToArray());
 			}));			
 		}
 
-		void client_ReceivedClientId(Client client)
+		void client_OnReceivedClientId(Client sender, ClientIdEventArgs eventArgs)
 		{
 			HandleTitleChange("Client - Connected - " + client.Id);
 		}
 
-		private void client_SocketError(Client client, Exception e)
+		private void client_OnSocketError(Client sender, SocketErrorEventArgs eventArgs)
 		{
-			MessageBox.Show(e.Message + Environment.NewLine + e.StackTrace);
+			MessageBox.Show(eventArgs.Exception.Message + Environment.NewLine + eventArgs.Exception.StackTrace);
 		}
 
-		void client_Connected(Client client)
+		void client_OnConnected(Client sender, EventArgs eventArgs)
 		{
 			HandleTitleChange("Client - Connected - Unknown Id");
 			HandleNewMsg(Environment.NewLine + "Connected!");
 		}
 
-		private void client_ConnectionClosed(Client client)
+		private void client_OnConnectionClosed(Client sender, EventArgs eventArgs)
 		{
 			timer1.Enabled = false;
 			HandleTitleChange("Client - Disconnected");
 			HandleNewMsg(Environment.NewLine + "Disconnected!");
 		}
 
-		private void client_MessageReceived(Client client, byte[] msg, KindMessage kindOfSend)
+		private void client_OnMessageReceived(Client client, ReceivedEventArgs eventArgs)
 		{
-			if (msg != null)
+			if (eventArgs.Message != null)
 			{
-				HandleNewMsg(Environment.NewLine + Encoding.UTF8.GetString(msg));
+				HandleNewMsg(Environment.NewLine + Encoding.UTF8.GetString(eventArgs.Message));
 			}
 		}
 		#endregion
@@ -202,39 +203,39 @@ namespace TestClientServer
 			if (server == null)
 			{
 				server = new Server();
-				server.MessageReceived += server_MessageReceived;
-				server.Disconnected += server_ConnectionClosed;
-				server.Connected += server_Connected;
-				server.SocketError += server_SocketError;
+				server.MessageReceived += server_OnMessageReceived;
+				server.Disconnected += server_OnConnectionClosed;
+				server.Connected += server_OnConnected;
+				server.SocketError += server_OnSocketError;
 			}
 			this.Text = "Server - listening";
-			server.StartServer(AddressTest, PortTest);
+			server.Start(AddressTest, PortTest);
 		}
 
-		private void server_SocketError(Client client, Exception e)
+		private void server_OnSocketError(Server sender, ServerSocketErrorEventArgs eventArgs)
 		{
-			MessageBox.Show(e.Message + Environment.NewLine + e.StackTrace);
+			MessageBox.Show(eventArgs.Exception.Message + Environment.NewLine + eventArgs.Exception.StackTrace);
 		}
 
-		void server_Connected(int id)
+		void server_OnConnected(Server sender, ServerEventArgs eventArgs)
 		{
-			HandleNewMsg(Environment.NewLine + id.ToString() + ": Connected!");
-			server.Send(id, "Hello ClientId " + id.ToString());
+			HandleNewMsg(Environment.NewLine + eventArgs.Client.Id.ToString() + ": Connected!");
+			server.Send(eventArgs.Client.Id, "Hello ClientId " + eventArgs.Client.Id.ToString());
 		}
 
-		private void server_ConnectionClosed(int id)
+		private void server_OnConnectionClosed(Server sender, ServerEventArgs eventArgs)
 		{
-			HandleNewMsg(Environment.NewLine + id.ToString() + ": Disconnected!");
+			HandleNewMsg(Environment.NewLine + eventArgs.Client.Id.ToString() + ": Disconnected!");
 		}
 
-		private void server_MessageReceived(int id, byte[] msg, KindMessage kindOfSend)
+		private void server_OnMessageReceived(Server sender, ServerReceivedEventArgs eventArgs)
 		{
-			if (msg != null)
+			if (eventArgs.Message != null)
 			{
-				var text = Encoding.UTF8.GetString(msg);
-				text = string.Format("From Client Id {0}: {1}", id, text);
+				var text = Encoding.UTF8.GetString(eventArgs.Message);
+				text = string.Format("From Client Id {0}: {1}", eventArgs.Client.Id, text);
 				HandleNewMsg(Environment.NewLine + text);
-				if (kindOfSend == KindMessage.Message)
+				if (eventArgs.MessageKind == MessageKind.Message)
 				{
 					server.SendAll(text);
 				}

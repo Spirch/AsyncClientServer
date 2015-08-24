@@ -1,104 +1,31 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Threading;
 using System.Text;
+using System.Threading;
 
 namespace AsyncClientServer
 {
-	public sealed class Server
+	public class Server : IDisposable, AsyncClientServer.IServer
 	{
-		private Socket listener;
-		private Stack<int> nextClientId;
+		private readonly ConcurrentStack<int> nextClientId;
+		private readonly ConcurrentDictionary<int, Client> clients;
+
 		private int maxid;
 		private bool isServerRunning;
-		private Dictionary<int, Client> clients;
-
-		private ManualResetEvent mreBeginAccept;
-
-		public delegate void ConnectedHandler(int ClientId);
-		public event ConnectedHandler Connected;
-		internal void RaiseConnected(int ClientId)
-		{
-			var handler = Connected;
-			if (handler != null)
-			{
-				handler(ClientId);
-			}
-		}
-
-		public delegate void MessageReceivedHandler(int ClientId, byte[] msg, KindMessage kindOfSend);
-		public event MessageReceivedHandler MessageReceived;
-		internal void RaiseMessageReceived(int ClientId, byte[] msg, KindMessage kindOfSend)
-		{
-			if (kindOfSend == KindMessage.Message)
-			{
-				var handler = MessageReceived;
-				if (handler != null)
-				{
-					handler(ClientId, msg, kindOfSend);
-				}
-			}
-			else if (kindOfSend == KindMessage.ListClientId)
-			{
-				GetClient(ClientId).SendBytes(clients.Keys.ToArrayOfByte(),KindMessage.ListClientId);
-			}
-		}
-
-		public delegate void MessageSentHandler(int ClientId);
-		public event MessageSentHandler MessageSent;
-		internal void RaiseMessageSent(int ClientId)
-		{
-			var handler = MessageSent;
-			if (handler != null)
-			{
-				handler(ClientId);
-			}
-		}
-
-		public delegate void DisconnectedHandler(int ClientId);
-		public event DisconnectedHandler Disconnected;
-		internal void RaiseDisconnected(int ClientId)
-		{
-			var handler = Disconnected;
-			if (handler != null)
-			{
-				handler(ClientId);
-			}
-		}
-
-		public delegate void SocketErrorHandler(Client client, Exception e);
-		public event SocketErrorHandler SocketError;
-		internal void RaiseSocketError(Client client, Exception e)
-		{
-			var handler = SocketError;
-			if (handler != null)
-			{
-				handler(client, e);
-			}
-		}
+		private Socket listener;
 
 		public Server()
 		{
 			isServerRunning = false;
-			clients = new Dictionary<int, Client>();
-			nextClientId = new Stack<int>();
-			nextClientId.Push(maxid);
+			clients = new ConcurrentDictionary<int, Client>();
+			nextClientId = new ConcurrentStack<int>();
 		}
 
-		public void StopServer()
-		{
-			if (isServerRunning)
-			{
-				isServerRunning = false;
-				mreBeginAccept.SetIfNotNull();
-				CloseAll();
-			}
-		}
-
-		public void StartServer(string address, int port)
+		public void Start(string address, int port)
 		{
 			if (!isServerRunning)
 			{
@@ -108,7 +35,6 @@ namespace AsyncClientServer
 				var endpoint = new IPEndPoint(ip, port);
 
 				listener = MiscOperation.NewSocket();
-
 				listener.Bind(endpoint);
 				listener.Listen(Const.BackLogLimit);
 
@@ -116,9 +42,165 @@ namespace AsyncClientServer
 			}
 		}
 
+		public void Stop()
+		{
+			if (isServerRunning)
+			{
+				isServerRunning = false;
+				mreBeginAccept.SetIfNotNull();
+				CloseAll();
+			}
+		}
+
+		private Client GetClient(int id)
+		{
+			Client client;
+
+			return clients.TryGetValue(id, out client) ? client : null;
+		}
+
+		private void RemoveClient(Client client)
+		{
+			client.Connected -= client_OnConnected;
+			client.SocketError -= client_OnSocketError;
+			client.Disconnected -= client_OnDisconnected;
+			client.MessageReceived -= client_OnMessageReceived;
+
+			Close(client);
+
+			if (!clients.TryRemove(client.Id, out client))
+			{
+				throw new Exception("if (!clients.TryRemove(client.Id, out client)))");
+			}
+
+			nextClientId.Push(client.Id);
+
+			OnDisconnected(client);
+		}
+
+		public void Close(int id)
+		{
+			var client = GetClient(id);
+
+			Close(client);
+		}
+
+		public void CloseAll()
+		{
+			var keys = clients.Keys.OrderByDescending(o => o);
+
+			foreach (var key in keys)
+			{
+				Close(key);
+			}
+		}
+
+		private void Close(Client client)
+		{
+			if (client != null)
+			{
+				client.Close();
+			}
+		}
+
+		public void Send(int id, string message)
+		{
+			var msg = Encoding.UTF8.GetBytes(message);
+
+			Send(id, msg);
+		}
+
+		public void SendAll(string message)
+		{
+			var keys = clients.Keys.OrderByDescending(o => o);
+			var msg = Encoding.UTF8.GetBytes(message);
+
+			foreach (var key in keys)
+			{
+				Send(key, msg);
+			}
+		}
+
+		private void Send(int id, byte[] message)
+		{
+			var client = GetClient(id);
+
+			if (client != null)
+			{
+				client.Send(message);
+			}
+		}
+
+		public event SocketEventHandler<Server, ServerEventArgs> Connected = delegate { };
+		internal void OnConnected(Client client)
+		{
+			Connected(this, ServerEventArgs.NewEvent(client));
+		}
+
+		public event SocketEventHandler<Server, ServerEventArgs> Disconnected = delegate { };
+		internal void OnDisconnected(Client client)
+		{
+			Disconnected(this, ServerEventArgs.NewEvent(client));
+		}
+
+		public event SocketEventHandler<Server, ServerSocketErrorEventArgs> SocketError = delegate { };
+		internal void OnSocketError(Client client, Exception exception)
+		{
+			SocketError(this, ServerSocketErrorEventArgs.NewEvent(client, exception));
+		}
+
+		public event SocketEventHandler<Server, ServerEventArgs> MessageSent = delegate { };
+		internal void OnMessageSent(Client client)
+		{
+			MessageSent(this, ServerEventArgs.NewEvent(client));
+		}
+
+		public event SocketEventHandler<Server, ServerReceivedEventArgs> MessageReceived = delegate { };
+		internal void OnMessageReceived(Client client, byte[] message, MessageKind messageKind)
+		{
+			if (messageKind == MessageKind.Message)
+			{
+				MessageReceived(this, ServerReceivedEventArgs.NewEvent(client, message, messageKind));
+			}
+			else if (messageKind == MessageKind.ListClientId)
+			{
+				client.Send(clients.Keys.ToArrayOfByte(), MessageKind.ListClientId);
+			}
+		}
+
+		private void client_OnConnected(Client client, EventArgs eventArgs)
+		{
+			client.Send(null, MessageKind.ServerReady);
+			client.Send(client.Id.ToByte(), MessageKind.ClientId);
+			client.Send(clients.Keys.ToArrayOfByte(), MessageKind.ListClientId);
+
+			OnConnected(client);
+		}
+
+		private void client_OnDisconnected(Client client, EventArgs eventArgs)
+		{
+			RemoveClient(client);
+		}
+
+		private void client_OnSocketError(Client client, SocketErrorEventArgs eventArgs)
+		{
+			OnSocketError(client, eventArgs.Exception);
+		}
+
+		private void client_OnMessageSent(Client client)
+		{
+			OnMessageSent(client);
+		}
+
+		private void client_OnMessageReceived(Client client, ReceivedEventArgs eventArgs)
+		{
+			OnMessageReceived(client, eventArgs.Message, eventArgs.MessageKind);
+		}
+
+		private ManualResetEvent mreBeginAccept;
 		private void BeginAccept()
 		{
-			using(mreBeginAccept = new ManualResetEvent(false))
+			using (mreBeginAccept = new ManualResetEvent(false))
 			{
 				while (isServerRunning)
 				{
@@ -149,135 +231,32 @@ namespace AsyncClientServer
 
 		private void HandleNewClient(Socket socket)
 		{
-			Client client;
+			int id;
 
-			lock (clients)
-			lock (nextClientId)
+			if (!nextClientId.TryPop(out id))
 			{
-				var id = nextClientId.Pop();
-
-				if (nextClientId.Count == 0)
-				{
-					nextClientId.Push(Interlocked.Increment(ref maxid));
-				}
-
-				client = new Client(id, true);
-				clients.Add(id, client);
+				id = Interlocked.Increment(ref maxid);
 			}
 
-			client.Connected += state_Connected;
-			client.SocketError += client_SocketError;
-			client.MessageReceived += state_MessageReceived;
-			client.Disconnected += state_Disconnected;
-			client.InitServer(socket);
-		}
+			var client = new Client(id, socket);
 
-		private void state_Connected(Client client)
-		{
-			client.SendBytes(null, KindMessage.ServerReady);
-			client.SendBytes(client.id.ToByte(), KindMessage.ClientId);
-			client.SendBytes(clients.Keys.ToArrayOfByte(), KindMessage.ListClientId);
-
-			RaiseConnected(client.Id);
-		}
-
-		private void state_Disconnected(Client client)
-		{
-			RemoveClient(client);
-		}
-
-		private void RemoveClient(Client client)
-		{
-			client.Connected -= state_Connected;
-			client.SocketError -= client_SocketError;
-			client.Disconnected -= state_Disconnected;
-			client.MessageReceived -= state_MessageReceived;
-
-			Close(client);
-
-			lock (clients)
-			lock (nextClientId)
+			if (!clients.TryAdd(id, client))
 			{
-				clients.Remove(client.Id);
-				nextClientId.Push(client.Id);
+				throw new Exception("if(!clients.TryAdd(id, client))");
 			}
 
-			RaiseDisconnected(client.Id);
+			client.Connected += client_OnConnected;
+			client.SocketError += client_OnSocketError;
+			client.MessageReceived += client_OnMessageReceived;
+			client.Disconnected += client_OnDisconnected;
+
+			client.InitSocket();
+			client.OnConnected();
 		}
-
-		private void client_SocketError(Client client, Exception e)
+		
+		public void Dispose()
 		{
-			RaiseSocketError(client, e);
-		}
-
-		private void client_MessageSent(int ClientId)
-		{
-			RaiseMessageSent(ClientId);
-		}
-
-		private void state_MessageReceived(Client client, byte[] msg, KindMessage kindOfSend)
-		{
-			RaiseMessageReceived(client.Id, msg, kindOfSend);
-		}
-
-		private Client GetClient(int id)
-		{
-			Client state;
-
-			return clients.TryGetValue(id, out state) ? state : null;
-		}
-
-		public void SendAll(string message)
-		{
-			var keys = clients.Keys.OrderByDescending(o => o);
-			var msg = Encoding.UTF8.GetBytes(message);
-
-			foreach (var key in keys)
-			{
-				Send(key, msg);
-			}
-		}
-
-		public void Send(int id, string message)
-		{
-			var msg = Encoding.UTF8.GetBytes(message);
-
-			Send(id, msg);
-		}
-
-		private void Send(int id, byte[] message)
-		{
-			var client = GetClient(id);
-
-			if (client != null)
-			{
-				client.Send(message);
-			}
-		}
-
-		public void CloseAll()
-		{
-			var keys = clients.Keys.OrderByDescending(o => o);
-
-			foreach (var key in keys)
-			{
-				Close(key);
-			}
-		}
-
-		public void Close(int id)
-		{
-			var client = GetClient(id);
-
-			Close(client);
-		}
-
-		private void Close(Client client)
-		{
-			if (client != null)
-			{
-				client.Close();
-			}
+			throw new NotImplementedException();
 		}
 	}
 }

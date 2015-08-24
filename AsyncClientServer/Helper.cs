@@ -2,14 +2,12 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace AsyncClientServer
 {
-    //supported message (kind of protocol)
-	public enum KindMessage : byte
+	//supported message (kind of protocol)
+	public enum MessageKind : byte
 	{
 		Unknown = 0,
 		ServerReady = 10,
@@ -22,7 +20,7 @@ namespace AsyncClientServer
 	public static class Const
 	{
 		public const int BufferSize = 1; //small buffer to test multi part message
-		public const int SizeOfEnvelopeKind = sizeof(KindMessage);
+		public const int SizeOfEnvelopeKind = sizeof(MessageKind);
 		public const int SizeOfEnvelopeLength = sizeof(int);
 		public const int TotalSizeOfEnvelope = SizeOfEnvelopeKind + SizeOfEnvelopeLength;
 		public const int MonitorDisconnectCycle = 1000; //every X millisecond check if the connection is still open
@@ -33,9 +31,10 @@ namespace AsyncClientServer
 	{
 		internal static void SetIfNotNull(this ManualResetEvent mre)
 		{
-			if (mre != null && !mre.SafeWaitHandle.IsClosed)
+			var localMre = mre;
+			if (localMre != null && !localMre.SafeWaitHandle.IsClosed)
 			{
-				mre.Set();
+				localMre.Set();
 			}
 		}
 
@@ -43,8 +42,8 @@ namespace AsyncClientServer
 		{
 			if (!client.closed)
 			{
-				client.Disconnect();
-				client.RaiseSocketError(e);
+				client.Close();
+				client.OnSocketError(e);
 			}
 		}
 

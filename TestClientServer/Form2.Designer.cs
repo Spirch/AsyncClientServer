@@ -82,7 +82,7 @@
 			this.nudClient.Size = new System.Drawing.Size(39, 20);
 			this.nudClient.TabIndex = 2;
 			this.nudClient.Value = new decimal(new int[] {
-            10,
+            15,
             0,
             0,
             0});
